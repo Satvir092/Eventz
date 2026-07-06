@@ -1,0 +1,154 @@
+const express = require("express");
+const Event = require("../models/Event");
+const requireAuth = require("../middleware/auth");
+
+const router = express.Router();
+
+// Helper: default an event to expire 2 hours after its start time
+function computeExpiry(startTime) {
+  return new Date(new Date(startTime).getTime() + 2 * 60 * 60 * 1000);
+}
+
+// POST /api/events - create a new event
+router.post("/", requireAuth, async (req, res) => {
+  try {
+    const { title, description, category, lng, lat, address, startTime, slotsTotal } = req.body;
+
+    if (!title || lng === undefined || lat === undefined || !startTime || !slotsTotal) {
+      return res.status(400).json({
+        error: "title, lng, lat, startTime, and slotsTotal are required",
+      });
+    }
+
+    const event = await Event.create({
+      title,
+      description,
+      category,
+      host: req.userId,
+      location: { type: "Point", coordinates: [lng, lat] },
+      address,
+      startTime,
+      expiresAt: computeExpiry(startTime),
+      slotsTotal,
+      participants: [{ user: req.userId }], // host auto-joins as first participant
+    });
+
+    const io = req.app.get("io");
+    io.emit("event:created", event);
+
+    res.status(201).json(event);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to create event" });
+  }
+});
+
+// GET /api/events/nearby?lng=&lat=&radiusMiles=&category=
+router.get("/nearby", async (req, res) => {
+  try {
+    const { lng, lat, radiusMiles = 5, category } = req.query;
+    if (lng === undefined || lat === undefined) {
+      return res.status(400).json({ error: "lng and lat query params are required" });
+    }
+
+    const radiusMeters = Number(radiusMiles) * 1609.34;
+
+    const filter = {
+      location: {
+        $nearSphere: {
+          $geometry: { type: "Point", coordinates: [Number(lng), Number(lat)] },
+          $maxDistance: radiusMeters,
+        },
+      },
+      status: { $in: ["open", "full"] },
+      expiresAt: { $gt: new Date() },
+    };
+    if (category) filter.category = category;
+
+    const events = await Event.find(filter).populate("host", "name reputationScore").limit(100);
+    res.json(events);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch nearby events" });
+  }
+});
+
+// GET /api/events/:id
+router.get("/:id", async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.id)
+      .populate("host", "name reputationScore")
+      .populate("participants.user", "name");
+    if (!event) return res.status(404).json({ error: "Event not found" });
+    res.json(event);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch event" });
+  }
+});
+
+// POST /api/events/:id/join
+// This is the "two people tap the last spot at once" race condition fix:
+// the update only succeeds if, at write time, the participants array is
+// still smaller than slotsTotal AND the user hasn't already joined.
+// Mongo's atomic findOneAndUpdate makes this check-and-set a single
+// operation instead of a read-then-write race.
+router.post("/:id/join", requireAuth, async (req, res) => {
+  try {
+    const event = await Event.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        status: "open",
+        "participants.user": { $ne: req.userId },
+        $expr: { $lt: [{ $size: "$participants" }, "$slotsTotal"] },
+      },
+      { $push: { participants: { user: req.userId } } },
+      { new: true }
+    );
+
+    if (!event) {
+      // Either the event doesn't exist, is full, or user already joined.
+      const exists = await Event.findById(req.params.id);
+      if (!exists) return res.status(404).json({ error: "Event not found" });
+      return res.status(409).json({ error: "Event is full or you've already joined" });
+    }
+
+    if (event.participants.length >= event.slotsTotal && event.status === "open") {
+      event.status = "full";
+      await event.save();
+    }
+
+    const io = req.app.get("io");
+    io.to(`event:${event._id}`).emit("event:updated", event);
+
+    res.json(event);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to join event" });
+  }
+});
+
+// POST /api/events/:id/leave
+router.post("/:id/leave", requireAuth, async (req, res) => {
+  try {
+    const event = await Event.findByIdAndUpdate(
+      req.params.id,
+      {
+        $pull: { participants: { user: req.userId } },
+        $set: { status: "open" },
+      },
+      { new: true }
+    );
+
+    if (!event) return res.status(404).json({ error: "Event not found" });
+
+    const io = req.app.get("io");
+    io.to(`event:${event._id}`).emit("event:updated", event);
+
+    res.json(event);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to leave event" });
+  }
+});
+
+module.exports = router;
