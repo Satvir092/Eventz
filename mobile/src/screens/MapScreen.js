@@ -5,14 +5,7 @@ import * as Location from "expo-location";
 
 import { fetchNearbyEvents } from "../api/client";
 import { useSocket } from "../context/SocketContext";
-
-const CATEGORY_COLORS = {
-  sports: "#2f9e44",
-  party: "#e8590c",
-  study: "#1971c2",
-  music: "#9c36b5",
-  other: "#495057",
-};
+import { COLORS, CATEGORY_META, categoryMeta } from "../theme";
 
 export default function MapScreen({ navigation }) {
   const [region, setRegion] = useState(null);
@@ -46,7 +39,6 @@ export default function MapScreen({ navigation }) {
     })();
   }, [loadNearby]);
 
-  // Listen for live event creation/updates from other users
   useEffect(() => {
     if (!socket?.current) return;
     const s = socket.current;
@@ -66,7 +58,7 @@ export default function MapScreen({ navigation }) {
   if (loading || !region) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" color={COLORS.primary} />
       </View>
     );
   }
@@ -74,26 +66,45 @@ export default function MapScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <MapView style={StyleSheet.absoluteFill} initialRegion={region} showsUserLocation>
-        {events.map((event) => (
-          <Marker
-            key={event._id}
-            coordinate={{
-              latitude: event.location.coordinates[1],
-              longitude: event.location.coordinates[0],
-            }}
-            pinColor={CATEGORY_COLORS[event.category] || CATEGORY_COLORS.other}
-            title={event.title}
-            description={`${event.slotsOpen} spot(s) open`}
-            onCalloutPress={() => navigation.navigate("EventDetail", { eventId: event._id })}
-          />
-        ))}
+        {events.map((event) => {
+          const meta = categoryMeta(event.category);
+          return (
+            <Marker
+              key={event._id}
+              coordinate={{
+                latitude: event.location.coordinates[1],
+                longitude: event.location.coordinates[0],
+              }}
+              title={`${meta.emoji} ${event.title}`}
+              description={`${event.slotsOpen} spot(s) open`}
+              onCalloutPress={() => navigation.navigate("EventDetail", { eventId: event._id })}
+            >
+              <View style={[styles.markerBubble, { backgroundColor: meta.color }]}>
+                <Text style={styles.markerEmoji}>{meta.emoji}</Text>
+              </View>
+            </Marker>
+          );
+        })}
       </MapView>
+
+      <View style={styles.headerPill}>
+        <Text style={styles.headerText}>Nearby Events</Text>
+      </View>
+
+      <View style={styles.legend}>
+        {Object.entries(CATEGORY_META).map(([key, meta]) => (
+          <View key={key} style={styles.legendRow}>
+            <Text style={styles.legendEmoji}>{meta.emoji}</Text>
+            <Text style={styles.legendLabel}>{meta.label}</Text>
+          </View>
+        ))}
+      </View>
 
       <TouchableOpacity
         style={styles.fab}
         onPress={() => navigation.navigate("CreateEvent", { region })}
       >
-        <Text style={styles.fabText}>+ Post</Text>
+        <Text style={styles.fabText}>+ Post event</Text>
       </TouchableOpacity>
     </View>
   );
@@ -101,20 +112,65 @@ export default function MapScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.background },
+  markerBubble: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "white",
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  markerEmoji: { fontSize: 16 },
+  headerPill: {
+    position: "absolute",
+    top: 20,
+    left: 16,
+    right: 16,
+    backgroundColor: COLORS.surface,
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  headerText: { fontSize: 15, fontWeight: "700", color: COLORS.textPrimary },
+  legend: {
+    position: "absolute",
+    bottom: 100,
+    left: 16,
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  legendRow: { flexDirection: "row", alignItems: "center", marginVertical: 2 },
+  legendEmoji: { fontSize: 13, marginRight: 6 },
+  legendLabel: { fontSize: 11, color: COLORS.textSecondary },
   fab: {
     position: "absolute",
     bottom: 32,
     alignSelf: "center",
-    backgroundColor: "#1971c2",
+    backgroundColor: COLORS.primary,
     paddingVertical: 14,
-    paddingHorizontal: 24,
+    paddingHorizontal: 26,
     borderRadius: 30,
     elevation: 4,
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
+    shadowColor: COLORS.primaryDark,
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
   },
-  fabText: { color: "white", fontWeight: "600", fontSize: 16 },
+  fabText: { color: "white", fontWeight: "700", fontSize: 16 },
 });

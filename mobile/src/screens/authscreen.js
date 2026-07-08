@@ -11,6 +11,7 @@ import {
 } from "react-native";
  
 import { login, register } from "../api/client";
+import { COLORS } from "../theme";
  
 export default function AuthScreen({ navigation }) {
   const [mode, setMode] = useState("login"); // "login" | "register"
@@ -93,24 +94,30 @@ export default function AuthScreen({ navigation }) {
 }
  
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: "center", padding: 24 },
-  heading: { fontSize: 24, fontWeight: "700", marginBottom: 24, textAlign: "center" },
+  container: { flex: 1, justifyContent: "center", padding: 24, backgroundColor: COLORS.background },
+  heading: { fontSize: 26, fontWeight: "800", marginBottom: 28, textAlign: "center", color: COLORS.textPrimary },
   input: {
     borderWidth: 1,
-    borderColor: "#dee2e6",
-    borderRadius: 8,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    borderRadius: 10,
     padding: 14,
     fontSize: 16,
     marginBottom: 12,
+    color: COLORS.textPrimary,
   },
   button: {
-    backgroundColor: "#1971c2",
+    backgroundColor: COLORS.primary,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: "center",
     marginTop: 8,
+    shadowColor: COLORS.primaryDark,
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
   },
   buttonText: { color: "white", fontWeight: "700", fontSize: 16 },
   switchModeButton: { marginTop: 16, alignItems: "center" },
-  switchModeText: { color: "#1971c2" },
+  switchModeText: { color: COLORS.primary, fontWeight: "500" },
 });

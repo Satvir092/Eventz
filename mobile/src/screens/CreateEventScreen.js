@@ -8,10 +8,10 @@ import {
   TouchableOpacity,
   Alert,
 } from "react-native";
+import MapView, { Marker } from "react-native-maps";
 
 import { createEvent } from "../api/client";
-
-const CATEGORIES = ["sports", "party", "study", "music", "other"];
+import { COLORS, CATEGORY_META } from "../theme";
 
 export default function CreateEventScreen({ route, navigation }) {
   const { region } = route.params;
@@ -21,6 +21,13 @@ export default function CreateEventScreen({ route, navigation }) {
   const [slotsTotal, setSlotsTotal] = useState("4");
   const [submitting, setSubmitting] = useState(false);
 
+  // Defaults to the map's current center, but the user can drag this pin
+  // anywhere to choose the actual event location.
+  const [pinCoords, setPinCoords] = useState({
+    latitude: region.latitude,
+    longitude: region.longitude,
+  });
+
   async function handleSubmit() {
     if (!title.trim()) {
       Alert.alert("Missing title", "Give your event a short title.");
@@ -28,15 +35,13 @@ export default function CreateEventScreen({ route, navigation }) {
     }
     setSubmitting(true);
     try {
-      // MVP: uses the map's current center as the event location.
-      // Next iteration: let the user drag a pin to pick an exact spot.
       await createEvent({
         title,
         description,
         category,
-        lng: region.longitude,
-        lat: region.latitude,
-        startTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // defaults to 1hr from now
+        lng: pinCoords.longitude,
+        lat: pinCoords.latitude,
+        startTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         slotsTotal: Number(slotsTotal) || 1,
       });
       navigation.goBack();
@@ -48,11 +53,12 @@ export default function CreateEventScreen({ route, navigation }) {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
       <Text style={styles.label}>What's happening?</Text>
       <TextInput
         style={styles.input}
         placeholder="e.g. 3v3 pickup basketball"
+        placeholderTextColor={COLORS.textMuted}
         value={title}
         onChangeText={setTitle}
       />
@@ -61,6 +67,7 @@ export default function CreateEventScreen({ route, navigation }) {
       <TextInput
         style={[styles.input, styles.multiline]}
         placeholder="Any details people should know"
+        placeholderTextColor={COLORS.textMuted}
         value={description}
         onChangeText={setDescription}
         multiline
@@ -68,15 +75,48 @@ export default function CreateEventScreen({ route, navigation }) {
 
       <Text style={styles.label}>Category</Text>
       <View style={styles.categoryRow}>
-        {CATEGORIES.map((c) => (
-          <TouchableOpacity
-            key={c}
-            style={[styles.chip, category === c && styles.chipSelected]}
-            onPress={() => setCategory(c)}
+        {Object.entries(CATEGORY_META).map(([key, meta]) => {
+          const selected = category === key;
+          return (
+            <TouchableOpacity
+              key={key}
+              style={[
+                styles.chip,
+                selected && { backgroundColor: meta.color, borderColor: meta.color },
+              ]}
+              onPress={() => setCategory(key)}
+            >
+              <Text style={styles.chipEmoji}>{meta.emoji}</Text>
+              <Text style={selected ? styles.chipTextSelected : styles.chipText}>
+                {meta.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <Text style={styles.label}>Where's it happening?</Text>
+      <Text style={styles.hint}>Drag the pin to set the exact spot</Text>
+      <View style={styles.mapWrapper}>
+        <MapView
+          style={styles.map}
+          initialRegion={{
+            latitude: region.latitude,
+            longitude: region.longitude,
+            latitudeDelta: 0.02,
+            longitudeDelta: 0.02,
+          }}
+        >
+          <Marker
+            coordinate={pinCoords}
+            draggable
+            onDragEnd={(e) => setPinCoords(e.nativeEvent.coordinate)}
           >
-            <Text style={category === c ? styles.chipTextSelected : styles.chipText}>{c}</Text>
-          </TouchableOpacity>
-        ))}
+            <View style={[styles.pinBubble, { backgroundColor: CATEGORY_META[category].color }]}>
+              <Text style={styles.pinEmoji}>{CATEGORY_META[category].emoji}</Text>
+            </View>
+          </Marker>
+        </MapView>
       </View>
 
       <Text style={styles.label}>How many people total (including you)?</Text>
@@ -87,11 +127,7 @@ export default function CreateEventScreen({ route, navigation }) {
         onChangeText={setSlotsTotal}
       />
 
-      <TouchableOpacity
-        style={styles.submitButton}
-        onPress={handleSubmit}
-        disabled={submitting}
-      >
+      <TouchableOpacity style={styles.submitButton} onPress={handleSubmit} disabled={submitting}>
         <Text style={styles.submitText}>{submitting ? "Posting..." : "Post Event"}</Text>
       </TouchableOpacity>
     </ScrollView>
@@ -99,35 +135,68 @@ export default function CreateEventScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 20 },
-  label: { fontWeight: "600", marginTop: 16, marginBottom: 6, fontSize: 14 },
+  screen: { backgroundColor: COLORS.background },
+  container: { padding: 20, paddingBottom: 40 },
+  label: { fontWeight: "700", marginTop: 18, marginBottom: 6, fontSize: 14, color: COLORS.textPrimary },
+  hint: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 8 },
   input: {
     borderWidth: 1,
-    borderColor: "#dee2e6",
-    borderRadius: 8,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    borderRadius: 10,
     padding: 12,
     fontSize: 16,
+    color: COLORS.textPrimary,
   },
   multiline: { height: 80, textAlignVertical: "top" },
-  categoryRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  categoryRow: { flexDirection: "row", flexWrap: "wrap" },
   chip: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#dee2e6",
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
     marginRight: 8,
     marginBottom: 8,
   },
-  chipSelected: { backgroundColor: "#1971c2", borderColor: "#1971c2" },
-  chipText: { color: "#495057" },
-  chipTextSelected: { color: "white", fontWeight: "600" },
+  chipEmoji: { fontSize: 14, marginRight: 5 },
+  chipText: { color: COLORS.textSecondary, fontWeight: "500" },
+  chipTextSelected: { color: "white", fontWeight: "700" },
+  mapWrapper: {
+    height: 220,
+    borderRadius: 14,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  map: { flex: 1 },
+  pinBubble: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "white",
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  pinEmoji: { fontSize: 17 },
   submitButton: {
     marginTop: 28,
-    backgroundColor: "#1971c2",
+    backgroundColor: COLORS.primary,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: "center",
+    shadowColor: COLORS.primaryDark,
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
   },
   submitText: { color: "white", fontWeight: "700", fontSize: 16 },
 });
