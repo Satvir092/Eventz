@@ -2,28 +2,28 @@ import React, { useEffect, useState, useCallback } from "react";
 import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator, Alert } from "react-native";
 import MapView, { Marker } from "react-native-maps";
 import * as Location from "expo-location";
-
+import { useFocusEffect } from "@react-navigation/native";
+ 
 import { fetchNearbyEvents } from "../api/client";
 import { useSocket } from "../context/SocketContext";
 import { COLORS, CATEGORY_META, categoryMeta } from "../theme";
-
+ 
 export default function MapScreen({ navigation }) {
   const [region, setRegion] = useState(null);
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const socket = useSocket();
-
+ 
   const loadNearby = useCallback(async (lat, lng) => {
     try {
       const results = await fetchNearbyEvents(lng, lat, 5);
       setEvents(results);
     } catch (err) {
       console.warn("Failed to load nearby events:", err.message);
-    } finally {
-      setLoading(false);
     }
   }, []);
-
+ 
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -35,18 +35,30 @@ export default function MapScreen({ navigation }) {
       const position = await Location.getCurrentPositionAsync({});
       const { latitude, longitude } = position.coords;
       setRegion({ latitude, longitude, latitudeDelta: 0.05, longitudeDelta: 0.05 });
-      loadNearby(latitude, longitude);
+      await loadNearby(latitude, longitude);
+      setLoading(false);
     })();
   }, [loadNearby]);
-
+ 
+  // Sockets can miss messages if the phone briefly drops connection (common
+  // on mobile networks), so rather than relying on push updates alone, we
+  // also refetch every time this screen comes back into focus - e.g. right
+  // after posting a new event and navigating back. This is what actually
+  // guarantees a freshly created event shows up.
+  useFocusEffect(
+    useCallback(() => {
+      if (region) loadNearby(region.latitude, region.longitude);
+    }, [region, loadNearby])
+  );
+ 
   useEffect(() => {
     if (!socket?.current) return;
     const s = socket.current;
-
-    const onCreated = (event) => setEvents((prev) => [event, ...prev]);
+ 
+    const onCreated = (event) => setEvents((prev) => [event, ...prev.filter((e) => e._id !== event._id)]);
     const onUpdated = (updated) =>
       setEvents((prev) => prev.map((e) => (e._id === updated._id ? updated : e)));
-
+ 
     s.on("event:created", onCreated);
     s.on("event:updated", onUpdated);
     return () => {
@@ -54,7 +66,14 @@ export default function MapScreen({ navigation }) {
       s.off("event:updated", onUpdated);
     };
   }, [socket]);
-
+ 
+  async function handleRefresh() {
+    if (!region || refreshing) return;
+    setRefreshing(true);
+    await loadNearby(region.latitude, region.longitude);
+    setRefreshing(false);
+  }
+ 
   if (loading || !region) {
     return (
       <View style={styles.center}>
@@ -62,7 +81,7 @@ export default function MapScreen({ navigation }) {
       </View>
     );
   }
-
+ 
   return (
     <View style={styles.container}>
       <MapView style={StyleSheet.absoluteFill} initialRegion={region} showsUserLocation>
@@ -86,11 +105,17 @@ export default function MapScreen({ navigation }) {
           );
         })}
       </MapView>
-
-      <View style={styles.headerPill}>
-        <Text style={styles.headerText}>Nearby Events</Text>
-      </View>
-
+ 
+      <TouchableOpacity style={styles.headerPill} onPress={handleRefresh} disabled={refreshing}>
+        {refreshing ? (
+          <ActivityIndicator size="small" color={COLORS.primary} />
+        ) : (
+          <Text style={styles.headerText}>
+            {events.length} event{events.length === 1 ? "" : "s"} nearby · tap to refresh
+          </Text>
+        )}
+      </TouchableOpacity>
+ 
       <View style={styles.legend}>
         {Object.entries(CATEGORY_META).map(([key, meta]) => (
           <View key={key} style={styles.legendRow}>
@@ -99,7 +124,7 @@ export default function MapScreen({ navigation }) {
           </View>
         ))}
       </View>
-
+ 
       <TouchableOpacity
         style={styles.fab}
         onPress={() => navigation.navigate("CreateEvent", { region })}
@@ -109,7 +134,7 @@ export default function MapScreen({ navigation }) {
     </View>
   );
 }
-
+ 
 const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.background },
@@ -136,12 +161,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 16,
+    alignItems: "center",
     shadowColor: "#000",
     shadowOpacity: 0.12,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
   },
-  headerText: { fontSize: 15, fontWeight: "700", color: COLORS.textPrimary },
+  headerText: { fontSize: 13, fontWeight: "600", color: COLORS.textPrimary },
   legend: {
     position: "absolute",
     bottom: 100,

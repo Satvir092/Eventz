@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   View,
   Text,
@@ -8,11 +8,11 @@ import {
   TouchableOpacity,
   Alert,
 } from "react-native";
-import MapView, { Marker } from "react-native-maps";
-
+import MapView from "react-native-maps";
+ 
 import { createEvent } from "../api/client";
 import { COLORS, CATEGORY_META } from "../theme";
-
+ 
 export default function CreateEventScreen({ route, navigation }) {
   const { region } = route.params;
   const [title, setTitle] = useState("");
@@ -20,14 +20,28 @@ export default function CreateEventScreen({ route, navigation }) {
   const [category, setCategory] = useState("sports");
   const [slotsTotal, setSlotsTotal] = useState("4");
   const [submitting, setSubmitting] = useState(false);
-
-  // Defaults to the map's current center, but the user can drag this pin
-  // anywhere to choose the actual event location.
+ 
+  // Fixed-center-pin pattern: instead of dragging a tiny marker (fiddly on
+  // a touchscreen), the pin stays fixed in the middle of the screen and the
+  // user drags/pans the *map* underneath it - much bigger, easier target.
   const [pinCoords, setPinCoords] = useState({
     latitude: region.latitude,
     longitude: region.longitude,
   });
-
+  const mapRef = useRef(null);
+ 
+  function handleRegionChangeComplete(newRegion) {
+    setPinCoords({ latitude: newRegion.latitude, longitude: newRegion.longitude });
+  }
+ 
+  function resetToCurrentLocation() {
+    mapRef.current?.animateToRegion(
+      { ...region, latitudeDelta: 0.02, longitudeDelta: 0.02 },
+      300
+    );
+    setPinCoords({ latitude: region.latitude, longitude: region.longitude });
+  }
+ 
   async function handleSubmit() {
     if (!title.trim()) {
       Alert.alert("Missing title", "Give your event a short title.");
@@ -51,7 +65,9 @@ export default function CreateEventScreen({ route, navigation }) {
       setSubmitting(false);
     }
   }
-
+ 
+  const activeMeta = CATEGORY_META[category];
+ 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
       <Text style={styles.label}>What's happening?</Text>
@@ -62,7 +78,7 @@ export default function CreateEventScreen({ route, navigation }) {
         value={title}
         onChangeText={setTitle}
       />
-
+ 
       <Text style={styles.label}>Details</Text>
       <TextInput
         style={[styles.input, styles.multiline]}
@@ -72,7 +88,7 @@ export default function CreateEventScreen({ route, navigation }) {
         onChangeText={setDescription}
         multiline
       />
-
+ 
       <Text style={styles.label}>Category</Text>
       <View style={styles.categoryRow}>
         {Object.entries(CATEGORY_META).map(([key, meta]) => {
@@ -94,11 +110,18 @@ export default function CreateEventScreen({ route, navigation }) {
           );
         })}
       </View>
-
-      <Text style={styles.label}>Where's it happening?</Text>
-      <Text style={styles.hint}>Drag the pin to set the exact spot</Text>
+ 
+      <View style={styles.locationHeader}>
+        <Text style={styles.label}>Where's it happening?</Text>
+        <TouchableOpacity onPress={resetToCurrentLocation}>
+          <Text style={styles.resetLink}>Use my location</Text>
+        </TouchableOpacity>
+      </View>
+      <Text style={styles.hint}>Drag the map so the pin sits where you want</Text>
+ 
       <View style={styles.mapWrapper}>
         <MapView
+          ref={mapRef}
           style={styles.map}
           initialRegion={{
             latitude: region.latitude,
@@ -106,19 +129,17 @@ export default function CreateEventScreen({ route, navigation }) {
             latitudeDelta: 0.02,
             longitudeDelta: 0.02,
           }}
-        >
-          <Marker
-            coordinate={pinCoords}
-            draggable
-            onDragEnd={(e) => setPinCoords(e.nativeEvent.coordinate)}
-          >
-            <View style={[styles.pinBubble, { backgroundColor: CATEGORY_META[category].color }]}>
-              <Text style={styles.pinEmoji}>{CATEGORY_META[category].emoji}</Text>
-            </View>
-          </Marker>
-        </MapView>
+          onRegionChangeComplete={handleRegionChangeComplete}
+        />
+        {/* Fixed pin overlay - always centered, doesn't move with touches */}
+        <View pointerEvents="none" style={styles.fixedPinWrapper}>
+          <View style={[styles.pinBubble, { backgroundColor: activeMeta.color }]}>
+            <Text style={styles.pinEmoji}>{activeMeta.emoji}</Text>
+          </View>
+          <View style={[styles.pinStem, { backgroundColor: activeMeta.color }]} />
+        </View>
       </View>
-
+ 
       <Text style={styles.label}>How many people total (including you)?</Text>
       <TextInput
         style={styles.input}
@@ -126,14 +147,14 @@ export default function CreateEventScreen({ route, navigation }) {
         value={slotsTotal}
         onChangeText={setSlotsTotal}
       />
-
+ 
       <TouchableOpacity style={styles.submitButton} onPress={handleSubmit} disabled={submitting}>
         <Text style={styles.submitText}>{submitting ? "Posting..." : "Post Event"}</Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
-
+ 
 const styles = StyleSheet.create({
   screen: { backgroundColor: COLORS.background },
   container: { padding: 20, paddingBottom: 40 },
@@ -165,14 +186,24 @@ const styles = StyleSheet.create({
   chipEmoji: { fontSize: 14, marginRight: 5 },
   chipText: { color: COLORS.textSecondary, fontWeight: "500" },
   chipTextSelected: { color: "white", fontWeight: "700" },
+  locationHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  resetLink: { color: COLORS.primary, fontWeight: "600", fontSize: 13, marginTop: 18 },
   mapWrapper: {
-    height: 220,
+    height: 240,
     borderRadius: 14,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   map: { flex: 1 },
+  fixedPinWrapper: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    marginLeft: -18,
+    marginTop: -46, // lifts the pin so its tip (not center) points at the map center
+    alignItems: "center",
+  },
   pinBubble: {
     width: 36,
     height: 36,
@@ -187,6 +218,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
   },
   pinEmoji: { fontSize: 17 },
+  pinStem: { width: 3, height: 12, marginTop: -2, borderRadius: 2 },
   submitButton: {
     marginTop: 28,
     backgroundColor: COLORS.primary,
@@ -200,3 +232,4 @@ const styles = StyleSheet.create({
   },
   submitText: { color: "white", fontWeight: "700", fontSize: 16 },
 });
+ 

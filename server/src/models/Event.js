@@ -6,7 +6,7 @@ const eventSchema = new mongoose.Schema(
     description: { type: String, trim: true },
     category: {
       type: String,
-      enum: ["sports", "party", "study", "music", "other"],
+      enum: ["sports", "party", "study", "music", "food", "games", "outdoors", "fitness", "other"],
       default: "other",
     },
     host: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
