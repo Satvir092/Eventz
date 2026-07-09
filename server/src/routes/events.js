@@ -1,6 +1,8 @@
 const express = require("express");
 const Event = require("../models/Event");
+const User = require("../models/User");
 const requireAuth = require("../middleware/auth");
+const { sendExpoPushNotifications } = require("../utils/pushNotifications");
 
 const router = express.Router();
 
@@ -36,12 +38,42 @@ router.post("/", requireAuth, async (req, res) => {
     const io = req.app.get("io");
     io.emit("event:created", event);
 
+    // Geofenced push: alert other users within 2 miles who have a push
+    // token and a recent known location, excluding the host.
+    notifyNearbyUsers(event).catch((err) =>
+      console.error("Failed to notify nearby users:", err.message)
+    );
+
     res.status(201).json(event);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to create event" });
   }
 });
+
+async function notifyNearbyUsers(event) {
+  const radiusMeters = 2 * 1609.34; // 2 miles
+  const nearbyUsers = await User.find({
+    _id: { $ne: event.host },
+    pushToken: { $exists: true, $ne: null },
+    lastLocation: {
+      $nearSphere: {
+        $geometry: { type: "Point", coordinates: event.location.coordinates },
+        $maxDistance: radiusMeters,
+      },
+    },
+  }).select("pushToken");
+
+  const messages = nearbyUsers.map((u) => ({
+    to: u.pushToken,
+    sound: "default",
+    title: "New event nearby",
+    body: event.title,
+    data: { eventId: event._id.toString() },
+  }));
+
+  await sendExpoPushNotifications(messages);
+}
 
 // GET /api/events/nearby?lng=&lat=&radiusMiles=&category=
 router.get("/nearby", async (req, res) => {
@@ -148,6 +180,46 @@ router.post("/:id/leave", requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to leave event" });
+  }
+});
+
+// POST /api/events/:id/attendance
+// Host-only: after an event has started, mark which participants didn't
+// show up. No-shows take a reputation hit; everyone else who was in the
+// participant list gets a small credit and their joined count bumped.
+router.post("/:id/attendance", requireAuth, async (req, res) => {
+  try {
+    const { noShowUserIds = [] } = req.body;
+    const event = await Event.findById(req.params.id);
+    if (!event) return res.status(404).json({ error: "Event not found" });
+    if (String(event.host) !== req.userId) {
+      return res.status(403).json({ error: "Only the host can record attendance" });
+    }
+    if (new Date(event.startTime) > new Date()) {
+      return res.status(400).json({ error: "Can't record attendance before the event starts" });
+    }
+
+    const noShowSet = new Set(noShowUserIds.map(String));
+
+    await Promise.all(
+      event.participants.map(async (p) => {
+        const userId = String(p.user);
+        if (noShowSet.has(userId)) {
+          await User.findByIdAndUpdate(userId, {
+            $inc: { eventsNoShow: 1, reputationScore: -10 },
+          });
+        } else {
+          await User.findByIdAndUpdate(userId, {
+            $inc: { eventsJoined: 1, reputationScore: 2 },
+          });
+        }
+      })
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to record attendance" });
   }
 });
 
